@@ -1,0 +1,19 @@
+SELECT user_id, count(order_id) as orders_count, 
+(
+SELECT
+round((count(order_id)::decimal/count(DISTINCT user_id)::decimal),2)
+FROM user_actions
+WHERE action = 'create_order'
+) as orders_avg,
+count(order_id) - (
+SELECT
+round((count(order_id)::decimal/count(DISTINCT user_id)::decimal),2)
+FROM user_actions
+WHERE action = 'create_order'
+)
+as orders_diff
+FROM user_actions
+WHERE action = 'create_order'
+group by user_id
+ORDER BY user_id
+LIMIT 1000
