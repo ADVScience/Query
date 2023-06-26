@@ -46,3 +46,16 @@ FROM products
 order by price desc
 limit 5)
 ORDER BY order_id
+
+№3
+# Расчет возраста каждого пользователя с учетом заполнения отсутвующих дат рождения на средний возраст
+with 
+table_age as (SELECT user_id, DATE_PART('year',
+age((SELECT max(time) FROM user_actions), birth_date))::decimal as all_age
+FROM users
+ORDER BY user_id),
+avg_age as (SELECT ROUND(AVG(all_age),0) as avg_age
+FROM table_age)
+
+SELECT user_id, coalesce(all_age, (SELECT avg_age FROM avg_age)) AS age
+FROM table_age
