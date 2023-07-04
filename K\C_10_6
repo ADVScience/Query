@@ -1,0 +1,17 @@
+#для каждого заказа каждого пользователя рассчитайте, сколько времени прошло с момента предыдущего заказа
+
+WITH T1 AS(
+SELECT DATE_TRUNC('DAY',creation_time)::DATE AS DATE, 
+COUNT(order_id) AS orders_count
+FROM orders
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+group BY DATE_TRUNC('DAY',creation_time)::DATE
+ORDER BY DATE)
+
+SELECT user_id, order_id,time, ROW_NUMBER() over(partition by user_id order by time) as order_number,
+lag(time) over(partition by user_id order by time) as time_lag,
+age(time, lag(time) over(partition by user_id order by time)) as time_diff
+FROM user_actions
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+ORDER BY user_id, order_number
+LIMIT 1000
