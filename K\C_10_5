@@ -1,0 +1,7 @@
+#Для каждого пользователя в таблице user_actions посчитайте порядковый номер каждого заказа.
+
+SELECT user_id, order_id,time, ROW_NUMBER() over(partition by user_id order by time) as order_number
+FROM user_actions
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+ORDER BY user_id, order_number
+LIMIT 1000
