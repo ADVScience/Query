@@ -1,0 +1,26 @@
+#Сделать так, чтобы для каждой записи возвращался результат сложения её значения со значениями всех предыдущих записей.
+
+with t1 as(SELECT date_trunc('DAY', creation_time)::date as date,
+                  count(order_id) as orders_count
+           FROM   orders
+           WHERE  order_id not in (SELECT order_id
+                                   FROM   user_actions
+                                   WHERE  action = 'cancel_order')
+           GROUP BY date_trunc('DAY', creation_time)::date
+           ORDER BY date)
+SELECT date,
+       orders_count,
+       sum(orders_count) OVER(ORDER BY date) as orders_cum_count
+FROM   t1
+
+#Второй вариант:
+SELECT date,
+       orders_count,
+       sum(orders_count) OVER (ORDER BY date) as orders_cum_count
+FROM   (SELECT date(creation_time) as date,
+               count(order_id) as orders_count
+        FROM   orders
+        WHERE  order_id not in (SELECT order_id
+                                FROM   user_actions
+                                WHERE  action = 'cancel_order')
+        GROUP BY date) t
