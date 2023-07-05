@@ -1,0 +1,11 @@
+#Для каждой записи проставьте среднюю цену всех товаров. 
+Колонку с этим значением назовите avg_price. 
+Затем с помощью оконной функции и оператора FILTER в отдельной колонке рассчитайте среднюю цену товаров без учёта самого дорогого.
+
+SELECT product_id,
+       name,
+       price,
+       round(avg(price) OVER (), 2) as avg_price,
+       round(avg(price) filter (WHERE price not in (SELECT max(price) FROM   products)) OVER (), 2) as avg_price_filtered
+FROM   products
+ORDER BY price desc, product_id
