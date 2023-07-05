@@ -1,0 +1,61 @@
+#Расчет скользящего среднего числа заказов. Скользящее среднее для каждой записи считайте по трём предыдущим дням.
+
+with t1 as(SELECT date_trunc('DAY', creation_time)::date as date,
+                  count(order_id) as orders_count
+           FROM   orders
+           WHERE  order_id not in (SELECT order_id
+                                   FROM   user_actions
+                                   WHERE  action = 'cancel_order')
+           GROUP BY date_trunc('DAY', creation_time)::date
+           ORDER BY date), t3 as(SELECT user_id,
+                             time,
+                             time_lag,
+                             time_diff,
+                             order_number,
+                             round(avg(extract(epoch
+                      FROM   time_diff))
+                      OVER(
+                      PARTITION BY user_id)/3600)::integer as hours_between_orders, count(order_number)
+                      OVER (
+                      PARTITION BY date(time)) as orders_count
+                      FROM   (SELECT user_id,
+                                     order_id,
+                                     time,
+                                     row_number() OVER(PARTITION BY user_id
+                                                       ORDER BY date(time)) as order_number,
+                                     lag(time) OVER(PARTITION BY user_id
+                                                    ORDER BY time) as time_lag,
+                                     age(time, lag(time) OVER(PARTITION BY user_id
+                                                              ORDER BY time)) as time_diff
+                              FROM   user_actions
+                              WHERE  order_id not in (SELECT order_id
+                                                      FROM   user_actions
+                                                      WHERE  action = 'cancel_order')
+                              ORDER BY user_id, order_number)t2
+                      ORDER BY user_id), t4 as(SELECT time::date as date,
+                                max(orders_count) as orders_count
+                                --AVG(orders_count) OVER (PARTITION BY DATE_TRUNC('DAY',time)::DATE ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS moving_avg
+                         FROM   t3
+                         GROUP BY time::date
+                         ORDER BY time::date)
+SELECT date,
+       orders_count,
+       lag(moving_avg) OVER() as moving_avg
+FROM   (SELECT date,
+               orders_count,
+               round(avg(orders_count) OVER (rows between 2 preceding and current row),
+                     2) as moving_avg
+        FROM   t4) t5
+
+#Второй враинт:
+SELECT date,
+       orders_count,
+       round(avg(orders_count) OVER (ORDER BY date rows between 3 preceding and 1 preceding),
+             2) as moving_avg
+FROM   (SELECT date(creation_time) as date,
+               count(order_id) as orders_count
+        FROM   orders
+        WHERE  order_id not in (SELECT order_id
+                                FROM   user_actions
+                                WHERE  action = 'cancel_order')
+        GROUP BY date) t
