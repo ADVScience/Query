@@ -1,0 +1,35 @@
+#Отметьте в отдельной таблице тех курьеров, которые доставили в сентябре 2022 года заказов больше, чем в среднем все курьеры.
+
+WITH T1 AS (
+SELECT courier_id, count(order_id) as delivered_orders,
+ROUND(avg(count(order_id)) over (),2) as avg_delivered_orders
+FROM courier_actions
+WHERE action = 'deliver_order' and DATE_TRUNC('month',time) = '2022-09-01'
+GROUP BY courier_id
+ORDER BY courier_id
+) 
+
+SELECT courier_id, delivered_orders, avg_delivered_orders,
+(MAX(delivered_orders) OVER (PARTITION BY courier_id) > avg_delivered_orders)::INT AS is_above_avg_WITHOUT_CASE,
+CASE
+WHEN MAX(delivered_orders) OVER (PARTITION BY courier_id) > avg_delivered_orders  THEN 1
+WHEN MAX(delivered_orders) OVER (PARTITION BY courier_id) < avg_delivered_orders  THEN 0
+END AS is_above_avg
+FROM T1
+ORDER BY courier_id
+
+# Второй варинат:
+
+SELECT courier_id,
+       delivered_orders,
+       round(avg(delivered_orders) OVER (), 2) as avg_delivered_orders,
+       case when delivered_orders > round(avg(delivered_orders) OVER (), 2) then 1
+            else 0 end as is_above_avg
+FROM   (SELECT courier_id,
+               count(order_id) as delivered_orders
+        FROM   courier_actions
+        WHERE  action = 'deliver_order'
+           and date_part('month', time) = 9
+           and date_part('year', time) = 2022
+        GROUP BY courier_id) t
+ORDER BY courier_id
