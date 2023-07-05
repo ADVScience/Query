@@ -1,0 +1,55 @@
+#для полноты картины посчитаем, сколько в среднем времени проходит между заказами каждого пользователя.
+
+WITH T1 AS(
+SELECT DATE_TRUNC('DAY',creation_time)::DATE AS DATE, 
+COUNT(order_id) AS orders_count
+FROM orders
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+group BY DATE_TRUNC('DAY',creation_time)::DATE
+ORDER BY DATE),
+
+t3 as(
+SELECT user_id,
+time,
+time_lag,
+time_diff,
+order_number,
+ROUND(AVG(EXTRACT(epoch FROM time_diff )) over(partition by user_id)/3600)::INTEGER as hours_between_orders,
+COUNT(order_number) OVER (partition by user_id) AS count_orders
+FROM
+
+(SELECT user_id, order_id, time, ROW_NUMBER() over(partition by user_id order by time) as order_number,
+lag(time) over(partition by user_id order by time) as time_lag,
+age(time, lag(time) over(partition by user_id order by time)) as time_diff
+FROM user_actions
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+ORDER BY user_id, order_number
+)T2
+order by user_id)
+
+SELECT user_id, 
+MAX(hours_between_orders) AS hours_between_orders
+FROM T3 
+WHERE count_orders>1
+GROUP BY user_id
+LIMIT 1000
+
+
+#Второй вариант:
+SELECT user_id,
+       avg(time_diff)::integer as hours_between_orders
+FROM   (SELECT user_id,
+               order_id,
+               time,
+               extract(epoch
+        FROM   (time - lag(time, 1)
+        OVER (
+        PARTITION BY user_id
+        ORDER BY time)))/3600 as time_diff
+        FROM   user_actions
+        WHERE  order_id not in (SELECT order_id
+                                FROM   user_actions
+                                WHERE  action = 'cancel_order')) t
+WHERE  time_diff is not null
+GROUP BY user_id
+ORDER BY user_id limit 1000
