@@ -1,0 +1,15 @@
+# Из таблицы courier_actions отберите топ 10% курьеров по количеству доставленных за всё время заказов. 
+Выведите id курьеров, количество доставленных заказов и порядковый номер курьера в соответствии с числом доставленных заказов.
+
+with t1 as (SELECT courier_id,
+                   count(order_id) as orders_count,
+                   row_number () OVER (ORDER BY count(order_id) desc, courier_id) as courier_rank
+            FROM   courier_actions
+            WHERE  action = 'deliver_order'
+            GROUP BY courier_id)
+SELECT courier_id,
+       orders_count,
+       courier_rank
+FROM   t1
+WHERE  courier_rank <= (SELECT round(count(distinct courier_id)*0.1)
+                        FROM   courier_actions)
