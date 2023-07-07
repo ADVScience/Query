@@ -1,0 +1,105 @@
+#Рассчитайте медианную стоимость всех заказов из таблицы orders, оформленных в нашем сервисе.
+
+WITH T1 AS (
+  SELECT
+    order_id,
+    unnest (product_ids) as product_id
+  FROM
+    orders
+  WHERE
+    order_id not in (
+      SELECT
+        order_id
+      FROM
+        user_actions
+      WHERE
+        action = 'cancel_order'
+    )
+),
+t2 as (
+  SELECT
+    SUM(price) sum_price,
+    ROW_NUMBER () over(
+      order by
+        SUM(price)
+    ) number_of_price
+  FROM
+    T1
+    LEFT JOIN products USING(product_id)
+  GROUP BY
+    order_id
+)
+SELECT
+  CASE
+    WHEN median_price_ch IS NULL THEN median_price_nech
+    WHEN median_price_nech IS NULL THEN median_price_ch
+  END AS median_price
+FROM
+  (
+    SELECT
+      avg(sum_price) filter (
+        WHERE
+          number_of_price = avg_number_of_price + 0.5
+          or number_of_price = avg_number_of_price -0.5
+          AND max_number_of_price % 2 = 0
+      ) as median_price_ch,
+      min(sum_price) filter (
+        WHERE
+          number_of_price = round(avg_number_of_price)
+          AND max_number_of_price % 2 != 0
+      ) as median_price_nech
+    from(
+        SELECT
+          sum_price,
+          number_of_price,
+          max(number_of_price) over () as max_number_of_price,
+          avg(number_of_price) over () as avg_number_of_price
+        FROM
+          t2
+      ) t3
+  ) T4
+
+# Второй вариант:
+
+WITH main_table AS (
+  SELECT
+    order_price,
+    ROW_NUMBER() OVER (
+      ORDER BY
+        order_price
+    ) AS row_number,
+    COUNT(*) OVER() AS total_rows
+  FROM
+    (
+      SELECT
+        SUM(price) AS order_price
+      FROM
+        (
+          SELECT
+            order_id,
+            product_ids,
+            UNNEST(product_ids) AS product_id
+          FROM
+            orders
+          WHERE
+            order_id NOT IN (
+              SELECT
+                order_id
+              FROM
+                user_actions
+              WHERE
+                action = 'cancel_order'
+            )
+        ) t3
+        LEFT JOIN products USING(product_id)
+      GROUP BY
+        order_id
+    ) t1
+)
+SELECT
+  AVG(order_price) AS median_price
+FROM
+  main_table
+WHERE
+  row_number BETWEEN total_rows / 2.0
+  AND total_rows / 2.0 + 1
