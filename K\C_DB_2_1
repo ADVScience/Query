@@ -1,0 +1,42 @@
+#Для каждого дня в таблице orders рассчитайте следующие показатели:
+Выручку, полученную в этот день.
+Суммарную выручку на текущий день.
+Прирост выручки, полученной в этот день, относительно значения выручки за предыдущий день.
+
+
+with unnest_prod as (SELECT order_id,
+                            creation_time::date as date ,
+                            unnest(product_ids) as product_id
+                     FROM   orders
+                     WHERE  order_id not in (SELECT order_id
+                                             FROM   user_actions
+                                             WHERE  action = 'cancel_order')), revenue_table as (SELECT date,
+                                                           sum(price) as revenue
+                                                    FROM   unnest_prod
+                                                        LEFT JOIN products using (product_id)
+                                                    GROUP BY date
+                                                    ORDER BY date)
+SELECT date,
+       revenue,
+       sum(revenue) OVER(ORDER BY date) as total_revenue,
+       round(100*(revenue-lag(revenue) OVER(ORDER BY date))::decimal/lag(revenue) OVER(ORDER BY date),
+             2) as revenue_change
+FROM   revenue_table
+
+#Второй вариант:
+
+SELECT date,
+       revenue,
+       sum(revenue) OVER (ORDER BY date) as total_revenue,
+       round(100 * (revenue - lag(revenue, 1) OVER (ORDER BY date))::decimal / lag(revenue, 1) OVER (ORDER BY date),
+             2) as revenue_change
+FROM   (SELECT creation_time::date as date,
+               sum(price) as revenue
+        FROM   (SELECT creation_time,
+                       unnest(product_ids) as product_id
+                FROM   orders
+                WHERE  order_id not in (SELECT order_id
+                                        FROM   user_actions
+                                        WHERE  action = 'cancel_order')) t1
+            LEFT JOIN products using (product_id)
+        GROUP BY date) t2
