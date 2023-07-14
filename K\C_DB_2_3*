@@ -1,0 +1,118 @@
+#По таблицам orders и user_actions для каждого дня рассчитайте следующие показатели:
+Накопленную выручку на пользователя (Running ARPU).
+Накопленную выручку на платящего пользователя (Running ARPPU).
+Накопленную выручку с заказа, или средний чек (Running AOV).
+
+with
+paying_users_table as (
+SELECT min(date(time)) AS date, user_id as paying_user
+FROM user_actions
+WHERE order_id NOT IN ( SELECT order_id FROM user_actions WHERE action= 'cancel_order')
+GROUP BY user_id
+ORDER BY user_id),
+
+new_paying_users_table as (
+SELECT DATE, COUNT(DISTINCT paying_user) AS new_paying_users
+FROM paying_users_table
+GROUP BY date),
+
+total_users_table as (
+SELECT date(time) AS date, COUNT(DISTINCT user_id) as total_users
+FROM user_actions
+GROUP BY date(time)
+ORDER BY date),
+
+unnest_prod_table as (
+SELECT creation_time::date as date, order_id, UNNEST(product_ids) AS product_id
+FROM orders),
+
+price_of_products_table as (
+SELECT price, product_id
+FROM products),
+
+total_price_per_day_table as (
+SELECT DATE, sum(price) AS revenue, COUNT(DISTINCT order_id) AS count_orders FROM
+unnest_prod_table
+LEFT JOIN price_of_products_table USING(product_id)
+WHERE order_id NOT IN ( SELECT order_id FROM user_actions WHERE action= 'cancel_order')
+GROUP BY date
+ORDER BY date),
+
+new_users_table as (
+select min(date) as date, user_id from
+(
+SELECT 
+time::date as date, action,
+count(order_id) over (partition by user_id order by time) as count_ord,
+user_id
+from user_actions
+) t1
+group by user_id
+order by user_id
+),
+new_users_count as (
+SELECT date, count(user_id) as new_total_users
+from new_users_table
+group by date
+order by date)
+
+SELECT date,
+round((sum(revenue) over (order by date))::decimal/(sum(new_total_users) over (order by date)),2) as running_arpu,
+round((sum(revenue) over (order by date))::decimal/(sum(new_paying_users) over (order by date)),2) as running_arppu,
+round((sum(revenue) over (order by date))::decimal/sum(count_orders) over (order by date),2) as running_aov
+FROM new_paying_users_table 
+LEFT JOIN total_price_per_day_table USING(date)
+LEFT JOIN new_users_count USING(date)
+ORDER BY date
+
+
+
+#Второй вариант:
+
+SELECT date,
+       round(sum(revenue) OVER (ORDER BY date)::decimal / sum(new_users) OVER (ORDER BY date),
+             2) as running_arpu,
+       round(sum(revenue) OVER (ORDER BY date)::decimal / sum(new_paying_users) OVER (ORDER BY date),
+             2) as running_arppu,
+       round(sum(revenue) OVER (ORDER BY date)::decimal / sum(orders) OVER (ORDER BY date),
+             2) as running_aov
+FROM   (SELECT creation_time::date as date,
+               count(distinct order_id) as orders,
+               sum(price) as revenue
+        FROM   (SELECT order_id,
+                       creation_time,
+                       unnest(product_ids) as product_id
+                FROM   orders
+                WHERE  order_id not in (SELECT order_id
+                                        FROM   user_actions
+                                        WHERE  action = 'cancel_order')) t1
+            LEFT JOIN products using(product_id)
+        GROUP BY date) t2
+    LEFT JOIN (SELECT time::date as date,
+                      count(distinct user_id) as users
+               FROM   user_actions
+               GROUP BY date) t3 using (date)
+    LEFT JOIN (SELECT time::date as date,
+                      count(distinct user_id) as paying_users
+               FROM   user_actions
+               WHERE  order_id not in (SELECT order_id
+                                       FROM   user_actions
+                                       WHERE  action = 'cancel_order')
+               GROUP BY date) t4 using (date)
+    LEFT JOIN (SELECT date,
+                      count(user_id) as new_users
+               FROM   (SELECT user_id,
+                              min(time::date) as date
+                       FROM   user_actions
+                       GROUP BY user_id) t5
+               GROUP BY date) t6 using (date)
+    LEFT JOIN (SELECT date,
+                      count(user_id) as new_paying_users
+               FROM   (SELECT user_id,
+                              min(time::date) as date
+                       FROM   user_actions
+                       WHERE  order_id not in (SELECT order_id
+                                               FROM   user_actions
+                                               WHERE  action = 'cancel_order')
+                       GROUP BY user_id) t7
+               GROUP BY date) t8 using (date)
