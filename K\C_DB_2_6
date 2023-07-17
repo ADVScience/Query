@@ -1,0 +1,58 @@
+Для каждого товара, представленного в таблице products, за весь период времени в таблице orders рассчитайте следующие показатели:
+Суммарную выручку, полученную от продажи этого товара за весь период.
+Долю выручки от продажи этого товара в общей выручке, полученной за весь период.
+овары, округлённая доля которых в выручке составляет менее 0.5%, объедините в общую группу с названием «ДРУГОЕ» (без кавычек), 
+просуммировав округлённые доли этих товаров.
+
+with unnest_table as (
+SELECT order_id, UNNEST(product_ids) AS product_id, creation_time::DATE AS DATE
+FROM orders
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')),
+
+product_revenue as (
+SELECT name, COUNT(product_id), COUNT(product_id)*price AS revenue
+FROM unnest_table
+LEFT JOIN products USING (product_id)
+GROUP BY price,product_id,name
+ORDER BY revenue DESC
+),
+
+share_in_revenue_table as (
+SELECT name, revenue, 
+ROUND(100*(revenue/SUM(revenue) OVER ()),2) share_in_revenue
+FROM product_revenue),
+
+total_table as(
+SELECT CASE
+WHEN share_in_revenue <0.5 THEN 'ДРУГОЕ'
+ELSE name
+END AS product_name, revenue, share_in_revenue
+FROM share_in_revenue_table)
+
+SELECT product_name, SUM(revenue) AS revenue, SUM(share_in_revenue) AS share_in_revenue
+FROM total_table
+GROUP BY product_name
+ORDER BY revenue DESC
+
+#Второй варинант:
+
+SELECT product_name,
+       sum(revenue) as revenue,
+       sum(share_in_revenue) as share_in_revenue
+FROM   (SELECT case when round(100 * revenue / sum(revenue) OVER (), 2) >= 0.5 then name
+                    else 'ДРУГОЕ' end as product_name,
+               revenue,
+               round(100 * revenue / sum(revenue) OVER (), 2) as share_in_revenue
+        FROM   (SELECT name,
+                       sum(price) as revenue
+                FROM   (SELECT order_id,
+                               unnest(product_ids) as product_id
+                        FROM   orders
+                        WHERE  order_id not in (SELECT order_id
+                                                FROM   user_actions
+                                                WHERE  action = 'cancel_order')) t1
+                    LEFT JOIN products using(product_id)
+                GROUP BY name) t2) t3
+GROUP BY product_name
+ORDER BY revenue desc
+
