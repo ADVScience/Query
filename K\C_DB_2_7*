@@ -1,0 +1,169 @@
+# Для каждого дня в таблицах orders и courier_actions рассчитайте следующие показатели:
+Выручку, полученную в этот день.
+Затраты, образовавшиеся в этот день.
+Сумму НДС с продажи товаров в этот день.
+Валовую прибыль в этот день (выручка за вычетом затрат и НДС).
+Суммарную выручку на текущий день.
+Суммарные затраты на текущий день.
+Суммарный НДС на текущий день.
+Суммарную валовую прибыль на текущий день.
+Долю валовой прибыли в выручке за этот день (долю п.4 в п.1).
+Долю суммарной валовой прибыли в суммарной выручке на текущий день (долю п.8 в п.5).
+
+with 
+unnest_product_ids as (
+SELECT creation_time::DATE AS date, order_id, UNNEST(product_ids) AS product_id 
+FROM orders
+WHERE order_id not in (SELECT order_id FROM user_actions WHERE action = 'cancel_order')),
+
+price_of_products as (
+SELECT date, order_id, product_id, price, name, CASE 
+WHEN name in ('сахар', 'сухарики', 'сушки', 'семечки', 
+'масло льняное', 'виноград', 'масло оливковое', 
+'арбуз', 'батон', 'йогурт', 'сливки', 'гречка', 
+'овсянка', 'макароны', 'баранина', 'апельсины', 
+'бублики', 'хлеб', 'горох', 'сметана', 'рыба копченая', 
+'мука', 'шпроты', 'сосиски', 'свинина', 'рис', 
+'масло кунжутное', 'сгущенка', 'ананас', 'говядина', 
+'соль', 'рыба вяленая', 'масло подсолнечное', 'яблоки', 
+'груши', 'лепешка', 'молоко', 'курица', 'лаваш', 'вафли', 'мандарины') THEN round(price/11,2)
+ELSE round(price/6,2)
+END AS tax_per_product
+FROM unnest_product_ids LEFT JOIN products USING(product_id)),
+
+day_revenue as (
+SELECT date, sum(price) as revenue, sum(tax_per_product) as tax
+FROM price_of_products
+GROUP BY date
+ORDER BY date),
+
+fixed_costs AS (
+SELECT DISTINCT(time::DATE) AS date, CASE
+WHEN EXTRACT (MONTH FROM  time) = 8 THEN 120000
+WHEN EXTRACT (MONTH FROM  time) = 9 THEN 150000
+END AS fixed_costs
+FROM user_actions
+WHERE action != 'cancel_order'),
+
+orders_count AS (
+SELECT date, count(DISTINCT order_id) AS count_order
+FROM price_of_products
+GROUP BY date),
+
+order_costs_per_day AS (
+SELECT date, CASE 
+WHEN EXTRACT (MONTH FROM  date) = 8 THEN count_order*140
+WHEN EXTRACT (MONTH FROM  date) = 9 THEN count_order*115
+END AS order_costs
+FROM orders_count),
+
+count_orders_per_courier AS (
+SELECT time::DATE AS DATE, count(DISTINCT order_id) as orders_per_courier
+FROM courier_actions
+WHERE action = 'deliver_order'
+GROUP BY DATE,courier_id),
+
+courier_costs_per_day AS (
+SELECT date, 
+SUM(CASE 
+WHEN orders_per_courier < 5 THEN orders_per_courier*150
+WHEN orders_per_courier >= 5 AND EXTRACT (MONTH FROM  date) = 8 THEN orders_per_courier*150+400
+WHEN orders_per_courier >= 5 AND EXTRACT (MONTH FROM  date) = 9 THEN orders_per_courier*150+500
+END) AS courier_costs
+FROM count_orders_per_courier
+GROUP BY date),
+
+revenue_costs_tax_gross_profit AS (
+SELECT date, revenue,
+(fixed_costs+ order_costs+ courier_costs) AS costs,
+tax,
+(revenue - (fixed_costs+ order_costs+ courier_costs)-tax) AS gross_profit
+FROM day_revenue 
+LEFT JOIN fixed_costs USING(DATE)
+LEFT JOIN order_costs_per_day USING(DATE)
+LEFT JOIN courier_costs_per_day USING(DATE)
+ORDER BY date)
+
+SELECT date, revenue, costs, tax, gross_profit,
+SUM(revenue) OVER (ORDER BY DATE) AS total_revenue,
+SUM(costs) OVER (ORDER BY DATE) AS total_costs,
+SUM(tax) OVER (ORDER BY DATE) AS total_tax,
+SUM(gross_profit) OVER (ORDER BY DATE) AS total_gross_profit,
+ROUND(100*gross_profit::DECIMAL/revenue,2) AS gross_profit_ratio,
+ROUND(100*(SUM(gross_profit) OVER (ORDER BY DATE))::DECIMAL/ SUM(revenue) OVER (ORDER BY DATE),2) AS total_gross_profit_ratio
+FROM revenue_costs_tax_gross_profit
+
+#Второй вариант:
+
+SELECT date,
+       revenue,
+       costs,
+       tax,
+       gross_profit,
+       total_revenue,
+       total_costs,
+       total_tax,
+       total_gross_profit,
+       round(gross_profit / revenue * 100, 2) as gross_profit_ratio,
+       round(total_gross_profit / total_revenue * 100, 2) as total_gross_profit_ratio
+FROM   (SELECT date,
+               revenue,
+               costs,
+               tax,
+               revenue - costs - tax as gross_profit,
+               sum(revenue) OVER (ORDER BY date) as total_revenue,
+               sum(costs) OVER (ORDER BY date) as total_costs,
+               sum(tax) OVER (ORDER BY date) as total_tax,
+               sum(revenue - costs - tax) OVER (ORDER BY date) as total_gross_profit
+        FROM   (SELECT date,
+                       orders_packed,
+                       orders_delivered,
+                       couriers_count,
+                       revenue,
+                       case when date_part('month',date) = 8 then 120000.0 + 140 * coalesce(orders_packed, 0) + 150 * coalesce(orders_delivered, 0) + 400 * coalesce(couriers_count, 0)
+                            when date_part('month',date) = 9 then 150000.0 + 115 * coalesce(orders_packed, 0) + 150 * coalesce(orders_delivered, 0) + 500 * coalesce(couriers_count, 0) end as costs,
+                       tax
+                FROM   (SELECT creation_time::date as date,
+                               count(distinct order_id) as orders_packed,
+                               sum(price) as revenue,
+                               sum(tax) as tax
+                        FROM   (SELECT order_id,
+                                       creation_time,
+                                       product_id,
+                                       name,
+                                       price,
+                                       case when name in ('сахар', 'сухарики', 'сушки', 'семечки', 'масло льняное', 'виноград', 
+'масло оливковое', 'арбуз', 'батон', 'йогурт', 'сливки', 'гречка', 'овсянка', 'макароны', 'баранина', 'апельсины', 'бублики', 
+'хлеб', 'горох', 'сметана', 'рыба копченая', 'мука', 'шпроты', 'сосиски', 'свинина', 'рис', 'масло кунжутное', 'сгущенка', 
+'ананас', 'говядина', 'соль', 'рыба вяленая', 'масло подсолнечное', 'яблоки', 'груши', 'лепешка', 'молоко', 'курица', 'лаваш', 
+'вафли', 'мандарины') then round(price/110*10,2)
+                                            else round(price/120*20, 2) end as tax
+                                FROM   (SELECT order_id,
+                                               creation_time,
+                                               unnest(product_ids) as product_id
+                                        FROM   orders
+                                        WHERE  order_id not in (SELECT order_id
+                                                                FROM   user_actions
+                                                                WHERE  action = 'cancel_order')) t1
+                                    LEFT JOIN products using (product_id)) t2
+                        GROUP BY date) t3
+                    LEFT JOIN (SELECT time::date as date,
+                                      count(distinct order_id) as orders_delivered
+                               FROM   courier_actions
+                               WHERE  order_id not in (SELECT order_id
+                                                       FROM   user_actions
+                                                       WHERE  action = 'cancel_order')
+                                  and action = 'deliver_order'
+                               GROUP BY date) t4 using (date)
+                    LEFT JOIN (SELECT date,
+                                      count(courier_id) as couriers_count
+                               FROM   (SELECT time::date as date,
+                                              courier_id,
+                                              count(distinct order_id) as orders_delivered
+                                       FROM   courier_actions
+                                       WHERE  order_id not in (SELECT order_id
+                                                               FROM   user_actions
+                                                               WHERE  action = 'cancel_order')
+                                          and action = 'deliver_order'
+                                       GROUP BY date, courier_id having count(distinct order_id) >= 5) t5
+                               GROUP BY date) t6 using (date)) t7) t8
